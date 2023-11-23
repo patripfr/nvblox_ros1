@@ -57,7 +57,7 @@ void NvbloxHumanNode::getParameters() {
   nh_private_.getParam("human_occupancy_decay_rate_hz", 
     human_occupancy_decay_rate_hz_);
   nh_private_.getParam("human_esdf_update_rate_hz", human_esdf_update_rate_hz_);
-  nh_private_.getParam("human_keys", keys_);
+  nh_private_.getParam("keys", keys_);
 }
 
 void NvbloxHumanNode::initializeMultiMapper() {
@@ -154,20 +154,20 @@ void NvbloxHumanNode::advertiseTopics() {
   // Add some stuff
   for (auto& pair : masked_publishers_) {
     const std::string key = pair.first;
-    const std::string pcl_topic = "human_" + key + "_pointcloud";
+    const std::string pcl_topic = key + "_pointcloud";
     pair.second.pointcloud_publisher =  
       nh_private_.advertise<sensor_msgs::PointCloud2>(pcl_topic, 1, false);
-    const std::string esdf_topic = "human_" + key + "_esdf_pointcloud";
+    const std::string esdf_topic = key + "_esdf_pointcloud";
     pair.second.esdf_pointcloud_publisher = 
       nh_private_.advertise<sensor_msgs::PointCloud2>(esdf_topic, 1, false);
-    const std::string voxels_topic = "human_" + key + "_voxels";
+    const std::string voxels_topic = key + "_voxels";
     pair.second.voxels_publisher = 
       nh_private_.advertise<visualization_msgs::Marker>(voxels_topic, 1, false);
-    const std::string occupancy_topic = "human_" + key + "_occupancy";
+    const std::string occupancy_topic = key + "_occupancy";
     pair.second.occupancy_publisher = 
       nh_private_.advertise<sensor_msgs::PointCloud2>(
         occupancy_topic, 1, false);
-    const std::string map_slice_topic = "human_" + key + "_map_slice";
+    const std::string map_slice_topic = key + "_map_slice";
     pair.second.map_slice_publisher = 
       nh_private_.advertise<nvblox_msgs::DistanceMapSlice>(map_slice_topic, 1, 
                                                            false);
