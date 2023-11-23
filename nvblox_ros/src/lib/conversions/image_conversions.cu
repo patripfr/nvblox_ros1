@@ -62,6 +62,20 @@ bool monoImageFromImageMessage(const sensor_msgs::ImageConstPtr& image_msg,
   return true;
 }
 
+bool monoImageFromCVImage(const cv::Mat& cv_image,
+                               MonoImage* mono_image) {
+  CHECK_NOTNULL(mono_image);
+  // First check if we actually have a valid image here.
+  if (cv_image.type() != CV_8U) {
+    return false;
+  }
+
+  mono_image->populateFromBuffer(cv_image.rows, cv_image.cols,
+                                cv_image.data, MemoryType::kDevice);
+
+  return true;
+}
+
 void imageMessageFromDepthImage(const DepthImage& depth_image,
                                 const std::string& frame_id,
                                 sensor_msgs::Image* image_msg) {

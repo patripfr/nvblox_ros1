@@ -42,20 +42,22 @@ NvbloxHumanNode::NvbloxHumanNode(ros::NodeHandle& nh,
   // Initialize the MultiMapper and overwrite the base-class node's Mapper.
   initializeMultiMapper();
 
+  // Add additional timers and publish more topics
+  setupTimers();
+  advertiseTopics();
+
   // Subscribe to topics
   // NOTE(alexmillane): This function modifies to base class subscriptions to
   // add synchronization with segmentation masks.
   subscribeToTopics();
-
-  // Add additional timers and publish more topics
-  setupTimers();
-  advertiseTopics();
 }
 
 void NvbloxHumanNode::getParameters() {
   // TODO(TT) how to handle this node?
-  nh_.getParam("human_occupancy_decay_rate_hz", human_occupancy_decay_rate_hz_);
-  nh_.getParam("human_esdf_update_rate_hz_", human_esdf_update_rate_hz_);
+  nh_private_.getParam("human_occupancy_decay_rate_hz", 
+    human_occupancy_decay_rate_hz_);
+  nh_private_.getParam("human_esdf_update_rate_hz", human_esdf_update_rate_hz_);
+  nh_private_.getParam("human_keys", keys_);
 }
 
 void NvbloxHumanNode::initializeMultiMapper() {
@@ -65,7 +67,7 @@ void NvbloxHumanNode::initializeMultiMapper() {
   //   type)
   constexpr ProjectiveLayerType kDynamicLayerType =
       ProjectiveLayerType::kOccupancy;
-  multi_mapper_ = std::make_shared<MultiMapper>(
+  multi_mapper_ = std::make_shared<MultiMapper>(keys_,
       voxel_size_, MemoryType::kDevice, kDynamicLayerType,
       static_projective_layer_type_);
 
@@ -74,23 +76,34 @@ void NvbloxHumanNode::initializeMultiMapper() {
   // calling initializeMapper() (again) (it its also called in the base
   // constructor, on the now-deleted Mapper).
   mapper_ = multi_mapper_.get()->unmasked_mapper();
-  initializeMapper(mapper_.get(), nh_);
+  initializeMapper(mapper_.get(), nh_private_);
   // Set to an invalid depth to ignore human pixels in the unmasked mapper
   // during integration.
   multi_mapper_->setDepthUnmaskedImageInvalidPixel(-1.f);
 
   // Initialize the human mapper (masked mapper of the multi mapper)
-  const std::string mapper_name = "human_mapper";
-  human_mapper_ = multi_mapper_.get()->masked_mapper();
+
+  masked_mappers_ = multi_mapper_.get()->masked_mappers();
   // Human mapper params have not been declared yet
   // declareMapperParameters(mapper_name, this);
-  initializeMapper(human_mapper_.get(), nh_);
+  float max_integration_distance_m;
+  for (const auto pair : *masked_mappers_) {
+    initializeMapper(pair.second.get(), nh_private_);
+    max_integration_distance_m =
+      pair.second->occupancy_integrator().max_integration_distance_m();
+    masked_publishers_.insert(std::make_pair(pair.first, 
+                                             mapperPublisherBundle()));
+  }
+
+  ROS_INFO_STREAM("MAX DISTANCE: "<< max_integration_distance_m);
+
   // Set to a distance bigger than the max. integration distance to not include
   // non human pixels on the human mapper, but clear along the projection.
   // TODO(remosteiner): Think of a better way to do this.
   // Currently this leads to blocks being allocated even behind solid obstacles.
-  multi_mapper_->setDepthMaskedImageInvalidPixel(
-      human_mapper_->occupancy_integrator().max_integration_distance_m() * 2.f);
+  multi_mapper_->setDepthMaskedImageInvalidPixel(-1.f);
+  // multi_mapper_->setDepthMaskedImageInvalidPixel(
+  //     max_integration_distance_m * 2.f);
 }
 
 void NvbloxHumanNode::subscribeToTopics() {
@@ -139,21 +152,30 @@ void NvbloxHumanNode::subscribeToTopics() {
 
 void NvbloxHumanNode::advertiseTopics() {
   // Add some stuff
-  human_pointcloud_publisher_ = nh_private_.advertise<sensor_msgs::PointCloud2>(
-      "human_pointcloud", 1, false);
-  human_voxels_publisher_ = nh_private_.advertise<visualization_msgs::Marker>(
-      "human_voxels", 1, false);
-  human_occupancy_publisher_ = nh_private_.advertise<sensor_msgs::PointCloud2>(
-      "human_occupancy", 1, false);
-  human_esdf_pointcloud_publisher_ =
-      nh_private_.advertise<sensor_msgs::PointCloud2>("human_esdf_pointcloud",
-                                                      1, false);
+  for (auto& pair : masked_publishers_) {
+    const std::string key = pair.first;
+    const std::string pcl_topic = "human_" + key + "_pointcloud";
+    pair.second.pointcloud_publisher =  
+      nh_private_.advertise<sensor_msgs::PointCloud2>(pcl_topic, 1, false);
+    const std::string esdf_topic = "human_" + key + "_esdf_pointcloud";
+    pair.second.esdf_pointcloud_publisher = 
+      nh_private_.advertise<sensor_msgs::PointCloud2>(esdf_topic, 1, false);
+    const std::string voxels_topic = "human_" + key + "_voxels";
+    pair.second.voxels_publisher = 
+      nh_private_.advertise<visualization_msgs::Marker>(voxels_topic, 1, false);
+    const std::string occupancy_topic = "human_" + key + "_occupancy";
+    pair.second.occupancy_publisher = 
+      nh_private_.advertise<sensor_msgs::PointCloud2>(
+        occupancy_topic, 1, false);
+    const std::string map_slice_topic = "human_" + key + "_map_slice";
+    pair.second.map_slice_publisher = 
+      nh_private_.advertise<nvblox_msgs::DistanceMapSlice>(map_slice_topic, 1, 
+                                                           false);
+  }
+
   combined_esdf_pointcloud_publisher_ =
       nh_private_.advertise<sensor_msgs::PointCloud2>(
           "combined_esdf_pointcloud", 1, false);
-  human_map_slice_publisher_ =
-      nh_private_.advertise<nvblox_msgs::DistanceMapSlice>("human_map_slice", 1,
-                                                           false);
   combined_map_slice_publisher_ =
       nh_private_.advertise<nvblox_msgs::DistanceMapSlice>("combined_map_slice",
                                                            1, false);
@@ -165,11 +187,13 @@ void NvbloxHumanNode::advertiseTopics() {
 
 void NvbloxHumanNode::setupTimers() {
   {
-    ros::TimerOptions timer_options(
-        ros::Duration(1.0 / human_occupancy_decay_rate_hz_),
-        boost::bind(&NvbloxHumanNode::decayHumanOccupancy, this, _1),
-        &processing_queue_);
-    human_occupancy_decay_timer_ = nh_private_.createTimer(timer_options);
+    if (human_occupancy_decay_rate_hz_ > 0) {
+      ros::TimerOptions timer_options(
+          ros::Duration(1.0 / human_occupancy_decay_rate_hz_),
+          boost::bind(&NvbloxHumanNode::decayHumanOccupancy, this, _1),
+          &processing_queue_);
+      human_occupancy_decay_timer_ = nh_private_.createTimer(timer_options);
+    }
   }
   {
     ros::TimerOptions timer_options(
@@ -285,29 +309,58 @@ bool NvbloxHumanNode::processDepthImage(
       conversions::cameraFromMessage(*mask_camera_info_msg);
 
   // Convert the depth image.
-  if (!conversions::depthImageFromImageMessage(depth_img_ptr, &depth_image_) ||
-      !conversions::monoImageFromImageMessage(mask_img_ptr, &mask_image_)) {
+  if (!conversions::depthImageFromImageMessage(depth_img_ptr, &depth_image_)) {
     ROS_ERROR("Failed to transform depth or mask image.");
     return false;
   }
-  conversions_timer.Stop();
 
-  // Integrate
-  timing::Timer integration_timer("ros/depth/integrate");
-  multi_mapper_->integrateDepth(depth_image_, mask_image_, T_L_C_depth_,
-                                T_CM_CD, depth_camera_, mask_camera);
-  integration_timer.Stop();
 
-  timing::Timer overlay_timer("ros/depth/output/human_overlay");
-  if (depth_frame_overlay_publisher_.getNumSubscribers() > 0) {
-    sensor_msgs::Image img_msg;
-    const ColorImage& depth_overlay =
-        multi_mapper_->getLastDepthFrameMaskOverlay();
-    conversions::imageMessageFromColorImage(depth_overlay, depth_img_frame,
-                                            &img_msg);
-    depth_frame_overlay_publisher_.publish(img_msg);
+
+  if (mask_img_ptr->encoding != "mono8") {
+    return false;
+  }
+  cv_bridge::CvImageConstPtr mono_cv_image =
+      cv_bridge::toCvCopy(mask_img_ptr, "mono8");
+
+
+  std::vector<cv::Mat> channels;
+  channels.resize(keys_.size()+1);
+  for (size_t i=0; i<channels.size(); i++) {
+    channels[i] = cv::Mat::zeros(mono_cv_image->image.rows,
+                  mono_cv_image->image.cols,
+                  CV_8UC1);
   }
 
+  channels[0] = mono_cv_image->image.clone();
+  for (int u=0; u<mono_cv_image->image.rows; u++) {
+    for (int v=0; v<mono_cv_image->image.cols; v++) {
+      uint8_t val = mono_cv_image->image.at<uint8_t>(u,v);
+      if (val < channels.size() && val > 0u) {
+        channels[int(val)].at<uint8_t>(u,v) = val;
+      }
+    }
+  }
+  conversions_timer.Stop();
+
+  timing::Timer integration_timer("ros/depth/integrate");
+  for (size_t i=0; i<channels.size(); i++) {
+    if (!conversions::monoImageFromCVImage(channels[i], &mask_image_)) {
+      ROS_ERROR("Failed to transform color or mask image.");
+      return false;
+    }
+
+    // Integrate
+    if (i == 0) {
+      multi_mapper_->integrateDepth(depth_image_, mask_image_, T_L_C_depth_,
+                                T_CM_CD, depth_camera_, mask_camera);
+    } else {
+      multi_mapper_->integrateDepthMasked(depth_image_, mask_image_, 
+                                T_L_C_depth_,T_CM_CD, depth_camera_, 
+                                mask_camera, keys_[i-1]);
+    }
+  }
+
+  integration_timer.Stop();
   return true;
 }
 
@@ -358,29 +411,56 @@ bool NvbloxHumanNode::processColorImage(
     return false;
   }
 
-  // Convert the color image.
-  if (!conversions::colorImageFromImageMessage(color_img_ptr, &color_image_) ||
-      !conversions::monoImageFromImageMessage(mask_img_ptr, &mask_image_)) {
-    ROS_ERROR("Failed to transform color or mask image.");
+  // // Convert the color image.
+  if (!conversions::colorImageFromImageMessage(color_img_ptr, &color_image_)) {
+      ROS_ERROR("Failed to transform color or mask image.");
+      return false;
+    }
+
+  if (mask_img_ptr->encoding != "mono8") {
     return false;
+  }
+  cv_bridge::CvImageConstPtr mono_cv_image =
+      cv_bridge::toCvCopy(mask_img_ptr, "mono8");
+
+  std::vector<cv::Mat> channels;
+  channels.resize(keys_.size()+1);
+  for (size_t i=0; i<channels.size(); i++) {
+    channels[i] = cv::Mat::zeros(mono_cv_image->image.rows,
+                  mono_cv_image->image.cols,
+                  CV_8UC1);
+  }
+  channels[0] = mono_cv_image->image.clone();
+
+  for (int u=0; u<mono_cv_image->image.rows; u++) {
+    for (int v=0; v<mono_cv_image->image.cols; v++) {
+      uint8_t val = mono_cv_image->image.at<uint8_t>(u,v);
+      if (val < channels.size() && val > 0) {
+        channels[val].at<uint8_t>(u,v) = 255;
+      }
+    }
   }
   conversions_timer.Stop();
 
-  // Integrate
   timing::Timer integration_timer("ros/color/integrate");
-  multi_mapper_->integrateColor(color_image_, mask_image_, T_L_C, color_camera);
-  integration_timer.Stop();
+  for (size_t i=0; i<channels.size(); i++) {
+    if (!conversions::monoImageFromCVImage(channels[i], &mask_image_)) {
+      ROS_ERROR("Failed to transform color or mask image.");
+      return false;
+    }
 
-  timing::Timer overlay_timer("ros/color/output/human_overlay");
-  if (color_frame_overlay_publisher_.getNumSubscribers() > 0) {
-    sensor_msgs::Image img_msg;
-    const ColorImage& color_overlay =
-        multi_mapper_->getLastColorFrameMaskOverlay();
-    conversions::imageMessageFromColorImage(color_overlay, color_img_frame,
-                                            &img_msg);
-    color_frame_overlay_publisher_.publish(img_msg);
+    // Integrate
+    if (i == 0) {
+      multi_mapper_->integrateColor(color_image_, mask_image_, T_L_C, 
+                                    color_camera);
+    } else {
+      multi_mapper_->integrateColorMasked(color_image_, mask_image_, T_L_C, 
+                                          color_camera, keys_[i-1]);
+    }
+
   }
 
+  integration_timer.Stop();
   return true;
 }
 
@@ -394,166 +474,172 @@ void NvbloxHumanNode::processHumanEsdf(const ros::TimerEvent& /*event*/) {
   }
   publishHumanDebugOutput();
 
-  // Process the human esdf layer.
-  timing::Timer esdf_integration_timer("ros/humans/esdf/integrate");
-  std::vector<Index3D> updated_blocks;
-  if (esdf_2d_) {
-    updated_blocks = human_mapper_->updateEsdfSlice(
-        esdf_2d_min_height_, esdf_2d_max_height_, esdf_slice_height_);
-  } else {
-    updated_blocks = human_mapper_->updateEsdf();
-  }
-  esdf_integration_timer.Stop();
+  // DISABLED, NEEDS TO BE ADAPTED FOR MULITPLE CLASSES
+  // // Process the human esdf layer.
+  // timing::Timer esdf_integration_timer("ros/humans/esdf/integrate");
+  // std::vector<Index3D> updated_blocks;
+  // if (esdf_2d_) {
+  //   updated_blocks = masked_mappers_->updateEsdfSlice(
+  //       esdf_2d_min_height_, esdf_2d_max_height_, esdf_slice_height_);
+  // } else {
+  //   updated_blocks = masked_mappers_->updateEsdf();
+  // }
+  // esdf_integration_timer.Stop();
 
-  if (updated_blocks.empty()) {
-    return;
-  }
+  // if (updated_blocks.empty()) {
+  //   return;
+  // }
 
-  timing::Timer esdf_output_timer("ros/humans/esdf/output");
+  // timing::Timer esdf_output_timer("ros/humans/esdf/output");
 
-  // Check if anyone wants any human slice
-  if (esdf_distance_slice_ &&
-          (human_esdf_pointcloud_publisher_.getNumSubscribers() > 0) ||
-      (human_map_slice_publisher_.getNumSubscribers() > 0)) {
-    // Get the slice as an image
-    timing::Timer esdf_slice_compute_timer("ros/humans/esdf/output/compute");
-    AxisAlignedBoundingBox aabb;
-    Image<float> map_slice_image;
-    esdf_slice_converter_.distanceMapSliceImageFromLayer(
-        human_mapper_->esdf_layer(), esdf_slice_height_, &map_slice_image,
-        &aabb);
-    esdf_slice_compute_timer.Stop();
+  // // Check if anyone wants any human slice
+  // if (esdf_distance_slice_ &&
+  //         (human_esdf_pointcloud_publisher_.getNumSubscribers() > 0) ||
+  //     (human_map_slice_publisher_.getNumSubscribers() > 0)) {
+  //   // Get the slice as an image
+  //   timing::Timer esdf_slice_compute_timer("ros/humans/esdf/output/compute");
+  //   AxisAlignedBoundingBox aabb;
+  //   Image<float> map_slice_image;
+  //   esdf_slice_converter_.distanceMapSliceImageFromLayer(
+  //       masked_mappers_->esdf_layer(), esdf_slice_height_, &map_slice_image,
+  //       &aabb);
+  //   esdf_slice_compute_timer.Stop();
 
-    // Human slice pointcloud (for visualization)
-    if (human_esdf_pointcloud_publisher_.getNumSubscribers() > 0) {
-      timing::Timer esdf_output_human_pointcloud_timer(
-          "ros/humans/esdf/output/pointcloud");
-      sensor_msgs::PointCloud2 pointcloud_msg;
-      esdf_slice_converter_.sliceImageToPointcloud(
-          map_slice_image, aabb, esdf_slice_height_,
-          human_mapper_->esdf_layer().voxel_size(), &pointcloud_msg);
-      pointcloud_msg.header.frame_id = global_frame_;
-      pointcloud_msg.header.stamp = ros::Time::now();
-      human_esdf_pointcloud_publisher_.publish(pointcloud_msg);
-    }
+  //   // Human slice pointcloud (for visualization)
+  //   if (human_esdf_pointcloud_publisher_.getNumSubscribers() > 0) {
+  //     timing::Timer esdf_output_human_pointcloud_timer(
+  //         "ros/humans/esdf/output/pointcloud");
+  //     sensor_msgs::PointCloud2 pointcloud_msg;
+  //     esdf_slice_converter_.sliceImageToPointcloud(
+  //         map_slice_image, aabb, esdf_slice_height_,
+  //         masked_mappers_->esdf_layer().voxel_size(), &pointcloud_msg);
+  //     pointcloud_msg.header.frame_id = global_frame_;
+  //     pointcloud_msg.header.stamp = ros::Time::now();
+  //     human_esdf_pointcloud_publisher_.publish(pointcloud_msg);
+  //   }
 
-    // Human slice (for navigation)
-    if (human_map_slice_publisher_.getNumSubscribers() > 0) {
-      timing::Timer esdf_output_human_slice_timer(
-          "ros/humans/esdf/output/slice");
-      nvblox_msgs::DistanceMapSlice map_slice_msg;
-      esdf_slice_converter_.distanceMapSliceImageToMsg(
-          map_slice_image, aabb, esdf_slice_height_,
-          human_mapper_->voxel_size_m(), &map_slice_msg);
-      map_slice_msg.header.frame_id = global_frame_;
-      map_slice_msg.header.stamp = ros::Time::now();
-      human_map_slice_publisher_.publish(map_slice_msg);
-    }
-  }
+  //   // Human slice (for navigation)
+  //   if (human_map_slice_publisher_.getNumSubscribers() > 0) {
+  //     timing::Timer esdf_output_human_slice_timer(
+  //         "ros/humans/esdf/output/slice");
+  //     nvblox_msgs::DistanceMapSlice map_slice_msg;
+  //     esdf_slice_converter_.distanceMapSliceImageToMsg(
+  //         map_slice_image, aabb, esdf_slice_height_,
+  //         masked_mappers_->voxel_size_m(), &map_slice_msg);
+  //     map_slice_msg.header.frame_id = global_frame_;
+  //     map_slice_msg.header.stamp = ros::Time::now();
+  //     human_map_slice_publisher_.publish(map_slice_msg);
+  //   }
+  // }
 
-  // Check if anyone wants any human+statics slice
-  if (esdf_distance_slice_ &&
-          (combined_esdf_pointcloud_publisher_.getNumSubscribers() > 0) ||
-      (combined_map_slice_publisher_.getNumSubscribers() > 0)) {
-    // Combined slice
-    timing::Timer esdf_slice_compute_timer(
-        "ros/humans/esdf/output/combined/compute");
-    Image<float> combined_slice_image;
-    AxisAlignedBoundingBox combined_aabb;
-    esdf_slice_converter_.distanceMapSliceFromLayers(
-        mapper_->esdf_layer(), human_mapper_->esdf_layer(), esdf_slice_height_,
-        &combined_slice_image, &combined_aabb);
-    esdf_slice_compute_timer.Stop();
+  // // Check if anyone wants any human+statics slice
+  // if (esdf_distance_slice_ &&
+  //         (combined_esdf_pointcloud_publisher_.getNumSubscribers() > 0) ||
+  //     (combined_map_slice_publisher_.getNumSubscribers() > 0)) {
+  //   // Combined slice
+  //   timing::Timer esdf_slice_compute_timer(
+  //       "ros/humans/esdf/output/combined/compute");
+  //   Image<float> combined_slice_image;
+  //   AxisAlignedBoundingBox combined_aabb;
+  //   esdf_slice_converter_.distanceMapSliceFromLayers(
+  //       mapper_->esdf_layer(), masked_mappers_->esdf_layer(), 
+  //       esdf_slice_height_, &combined_slice_image, &combined_aabb);
+  //   esdf_slice_compute_timer.Stop();
 
-    // Human+Static slice pointcloud (for visualization)
-    if (combined_esdf_pointcloud_publisher_.getNumSubscribers() > 0) {
-      timing::Timer esdf_output_human_pointcloud_timer(
-          "ros/humans/esdf/output/combined/pointcloud");
-      sensor_msgs::PointCloud2 pointcloud_msg;
-      esdf_slice_converter_.sliceImageToPointcloud(
-          combined_slice_image, combined_aabb, esdf_slice_height_,
-          human_mapper_->esdf_layer().voxel_size(), &pointcloud_msg);
-      pointcloud_msg.header.frame_id = global_frame_;
-      pointcloud_msg.header.stamp = ros::Time::now();
-      combined_esdf_pointcloud_publisher_.publish(pointcloud_msg);
-    }
+  //   // Human+Static slice pointcloud (for visualization)
+  //   if (combined_esdf_pointcloud_publisher_.getNumSubscribers() > 0) {
+  //     timing::Timer esdf_output_human_pointcloud_timer(
+  //         "ros/humans/esdf/output/combined/pointcloud");
+  //     sensor_msgs::PointCloud2 pointcloud_msg;
+  //     esdf_slice_converter_.sliceImageToPointcloud(
+  //         combined_slice_image, combined_aabb, esdf_slice_height_,
+  //         masked_mappers_->esdf_layer().voxel_size(), &pointcloud_msg);
+  //     pointcloud_msg.header.frame_id = global_frame_;
+  //     pointcloud_msg.header.stamp = ros::Time::now();
+  //     combined_esdf_pointcloud_publisher_.publish(pointcloud_msg);
+  //   }
 
-    // Human+Static slice (for navigation)
-    if (combined_map_slice_publisher_.getNumSubscribers() > 0) {
-      timing::Timer esdf_output_human_slice_timer(
-          "ros/humans/esdf/output/combined/slice");
-      nvblox_msgs::DistanceMapSlice map_slice_msg;
-      esdf_slice_converter_.distanceMapSliceImageToMsg(
-          combined_slice_image, combined_aabb, esdf_slice_height_,
-          human_mapper_->voxel_size_m(), &map_slice_msg);
-      map_slice_msg.header.frame_id = global_frame_;
-      map_slice_msg.header.stamp = ros::Time::now();
-      human_map_slice_publisher_.publish(map_slice_msg);
-    }
-  }
-  esdf_output_timer.Stop();
+  //   // Human+Static slice (for navigation)
+  //   if (combined_map_slice_publisher_.getNumSubscribers() > 0) {
+  //     timing::Timer esdf_output_human_slice_timer(
+  //         "ros/humans/esdf/output/combined/slice");
+  //     nvblox_msgs::DistanceMapSlice map_slice_msg;
+  //     esdf_slice_converter_.distanceMapSliceImageToMsg(
+  //         combined_slice_image, combined_aabb, esdf_slice_height_,
+  //         masked_mappers_->voxel_size_m(), &map_slice_msg);
+  //     map_slice_msg.header.frame_id = global_frame_;
+  //     map_slice_msg.header.stamp = ros::Time::now();
+  //     human_map_slice_publisher_.publish(map_slice_msg);
+  //   }
+  // }
+  // esdf_output_timer.Stop();
 }
 
 void NvbloxHumanNode::decayHumanOccupancy(
     const ros::TimerEvent& /*event*/) {
   std::unique_lock<std::mutex> lock(map_mutex_);
-  human_mapper_->decayOccupancy();
+  for (auto pair : *masked_mappers_) {
+    pair.second->decayOccupancy();
+  }
 }
 
 void NvbloxHumanNode::publishHumanDebugOutput() {
   timing::Timer ros_human_debug_timer("ros/humans/output/debug");
 
+  // DISABLED FOR THE MOMENT, NEEDS TO BE ADAPTED TO WORK WITH MULTIPLE CLASSES
   // Get a human pointcloud
-  if (human_pointcloud_publisher_.getNumSubscribers() +
-          human_voxels_publisher_.getNumSubscribers() >
-      0) {
-    // Grab the human only image.
-    const DepthImage& depth_image_only_humans =
-        multi_mapper_->getLastDepthFrameMasked();
-    // Back project
-    image_back_projector_.backProjectOnGPU(
-        depth_image_only_humans, depth_camera_, &human_pointcloud_C_device_,
-        human_mapper_->occupancy_integrator().max_integration_distance_m());
-    transformPointcloudOnGPU(T_L_C_depth_, human_pointcloud_C_device_,
-                             &human_pointcloud_L_device_);
-  }
+  // if (human_pointcloud_publisher_.getNumSubscribers() +
+  //         human_voxels_publisher_.getNumSubscribers() >
+  //     0) {
+  //   // Grab the human only image.
+  //   const DepthImage& depth_image_only_humans =
+  //       multi_mapper_->getLastDepthFrameMasked();
+  //   // Back project
+  //   image_back_projector_.backProjectOnGPU(
+  //      depth_image_only_humans, depth_camera_, &human_pointcloud_C_device_,
+  //      masked_mappers_->occupancy_integrator().max_integration_distance_m());
+  //   transformPointcloudOnGPU(T_L_C_depth_, human_pointcloud_C_device_,
+  //                            &human_pointcloud_L_device_);
+  // }
 
-  // Publish the human pointcloud
-  if (human_pointcloud_publisher_.getNumSubscribers() > 0) {
-    // Back-project human depth image to pointcloud and publish.
-    sensor_msgs::PointCloud2 pointcloud_msg;
-    pointcloud_converter_.pointcloudMsgFromPointcloud(
-        human_pointcloud_L_device_, &pointcloud_msg);
-    pointcloud_msg.header.frame_id = global_frame_;
-    pointcloud_msg.header.stamp = ros::Time::now();
-    human_pointcloud_publisher_.publish(pointcloud_msg);
-  }
+  // // Publish the human pointcloud
+  // if (human_pointcloud_publisher_.getNumSubscribers() > 0) {
+  //   // Back-project human depth image to pointcloud and publish.
+  //   sensor_msgs::PointCloud2 pointcloud_msg;
+  //   pointcloud_converter_.pointcloudMsgFromPointcloud(
+  //       human_pointcloud_L_device_, &pointcloud_msg);
+  //   pointcloud_msg.header.frame_id = global_frame_;
+  //   pointcloud_msg.header.stamp = ros::Time::now();
+  //   human_pointcloud_publisher_.publish(pointcloud_msg);
+  // }
 
   // Publish human voxels
-  if (human_voxels_publisher_.getNumSubscribers() > 0) {
-    // Human voxels from points (in the layer frame)
-    image_back_projector_.pointcloudToVoxelCentersOnGPU(
-        human_pointcloud_L_device_, voxel_size_,
-        &human_voxel_centers_L_device_);
-    // Publish
-    visualization_msgs::Marker marker_msg;
-    pointcloud_converter_.pointsToCubesMarkerMsg(
-        human_voxel_centers_L_device_.points().toVector(), voxel_size_,
-        Color::Red(), &marker_msg);
-    marker_msg.header.frame_id = global_frame_;
-    marker_msg.header.stamp = ros::Time::now();
-    human_voxels_publisher_.publish(marker_msg);
-  }
+  // if (human_voxels_publisher_.getNumSubscribers() > 0) {
+  //   // Human voxels from points (in the layer frame)
+  //   image_back_projector_.pointcloudToVoxelCentersOnGPU(
+  //       human_pointcloud_L_device_, voxel_size_,
+  //       &human_voxel_centers_L_device_);
+  //   // Publish
+  //   visualization_msgs::Marker marker_msg;
+  //   pointcloud_converter_.pointsToCubesMarkerMsg(
+  //       human_voxel_centers_L_device_.points().toVector(), voxel_size_,
+  //       Color::Red(), &marker_msg);
+  //   marker_msg.header.frame_id = global_frame_;
+  //   marker_msg.header.stamp = ros::Time::now();
+  //   human_voxels_publisher_.publish(marker_msg);
+  // }
 
-  // Publish the human occupancy layer
-  if (human_occupancy_publisher_.getNumSubscribers() > 0) {
-    sensor_msgs::PointCloud2 pointcloud_msg;
-    layer_converter_.pointcloudMsgFromLayer(human_mapper_->occupancy_layer(),
-                                            &pointcloud_msg);
-    pointcloud_msg.header.frame_id = global_frame_;
-    pointcloud_msg.header.stamp = ros::Time::now();
-    human_occupancy_publisher_.publish(pointcloud_msg);
-  }
+  for (auto& key : *masked_mappers_)
+    // Publish the class occupancy layer
+    if (masked_publishers_[key.first].occupancy_publisher.getNumSubscribers() > 
+        0) {
+      sensor_msgs::PointCloud2 pointcloud_msg;
+      layer_converter_.pointcloudMsgFromLayer(key.second->occupancy_layer(),
+                                              &pointcloud_msg);
+      pointcloud_msg.header.frame_id = global_frame_;
+      pointcloud_msg.header.stamp = ros::Time::now();
+      masked_publishers_[key.first].occupancy_publisher.publish(pointcloud_msg);
+    }
 }
 
 }  // namespace nvblox

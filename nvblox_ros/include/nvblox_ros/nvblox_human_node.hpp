@@ -35,6 +35,15 @@
 
 namespace nvblox {
 
+struct mapperPublisherBundle {
+  ros::Publisher pointcloud_publisher;
+  ros::Publisher esdf_pointcloud_publisher;
+  ros::Publisher voxels_publisher;
+  ros::Publisher occupancy_publisher;
+  ros::Publisher map_slice_publisher; 
+  std::string key;
+};
+
 class NvbloxHumanNode : public NvbloxNode {
  public:
   explicit NvbloxHumanNode(ros::NodeHandle& nh, ros::NodeHandle& nh_private);
@@ -90,7 +99,11 @@ class NvbloxHumanNode : public NvbloxNode {
   // Holds the map layers and their associated integrators
   // - TsdfLayer, ColorLayer, OccupancyLayer, EsdfLayer, MeshLayer
   std::shared_ptr<MultiMapper> multi_mapper_;
-  std::shared_ptr<Mapper> human_mapper_;
+
+  // Holds the masked mappers for the respective keys
+  std::shared_ptr<std::map<std::string, std::shared_ptr<Mapper>>> 
+    masked_mappers_;
+
 
   // Synchronize: Depth + CamInfo + SegmentationMake + CamInfo
   typedef message_filters::sync_policies::ApproximateTime<
@@ -109,6 +122,7 @@ class NvbloxHumanNode : public NvbloxNode {
 
   ros::NodeHandle nh_;
 
+
   // Publishers
   ros::Publisher human_pointcloud_publisher_;
   ros::Publisher human_esdf_pointcloud_publisher_;
@@ -120,9 +134,15 @@ class NvbloxHumanNode : public NvbloxNode {
   ros::Publisher depth_frame_overlay_publisher_;
   ros::Publisher color_frame_overlay_publisher_;
 
+  // Holds the publishers for the respective keys
+  std::map<std::string, mapperPublisherBundle> masked_publishers_;
+
   // Timers
   ros::Timer human_occupancy_decay_timer_;
   ros::Timer human_esdf_processing_timer_;
+
+  // Keys of the respective object classes
+  std::vector<std::string> keys_;
 
   // Rates.
   float human_occupancy_decay_rate_hz_ = 10.0f;

@@ -44,6 +44,9 @@ bool colorImageFromImageMessage(const sensor_msgs::ImageConstPtr& image_msg,
 bool monoImageFromImageMessage(const sensor_msgs::ImageConstPtr& image_msg,
                                MonoImage* mono_image);
 
+bool monoImageFromCVImage(const cv::Mat& cv_image,
+                               MonoImage* mono_image);
+
 // Convert depth frame to image message.
 void imageMessageFromDepthImage(const DepthImage& depth_frame,
                                 const std::string& frame_id,
