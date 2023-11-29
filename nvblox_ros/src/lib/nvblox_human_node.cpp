@@ -95,8 +95,6 @@ void NvbloxHumanNode::initializeMultiMapper() {
                                              mapperPublisherBundle()));
   }
 
-  ROS_INFO_STREAM("MAX DISTANCE: "<< max_integration_distance_m);
-
   // Set to a distance bigger than the max. integration distance to not include
   // non human pixels on the human mapper, but clear along the projection.
   // TODO(remosteiner): Think of a better way to do this.
@@ -331,7 +329,9 @@ bool NvbloxHumanNode::processDepthImage(
                   CV_8UC1);
   }
 
-  channels[0] = mono_cv_image->image.clone();
+  // Uncomment this line to separate masked objects from the background
+  // channels[0] = mono_cv_image->image.clone();
+  
   for (int u=0; u<mono_cv_image->image.rows; u++) {
     for (int v=0; v<mono_cv_image->image.cols; v++) {
       uint8_t val = mono_cv_image->image.at<uint8_t>(u,v);
@@ -430,7 +430,9 @@ bool NvbloxHumanNode::processColorImage(
                   mono_cv_image->image.cols,
                   CV_8UC1);
   }
-  channels[0] = mono_cv_image->image.clone();
+
+  // Uncomment this line to separate masked objects from the background
+  // channels[0] = mono_cv_image->image.clone();
 
   for (int u=0; u<mono_cv_image->image.rows; u++) {
     for (int v=0; v<mono_cv_image->image.cols; v++) {
