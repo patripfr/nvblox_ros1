@@ -13,7 +13,7 @@ voxel_size: 0.05
 global_frame: "map"
 
 # Only used if `use_topic_transforms` is set to true. Pose and transform messages will be interpreted as being in this pose frame, and the remaining transform to the sensor frame will be looked up on the TF tree.
-pose_frame: "base_link"
+pose_frame: "camera_link"
 
 #  If the depth data is originating from Realsense Depth Cameras.
 is_realsense_data: true
@@ -66,7 +66,7 @@ slice_visualization_attachment_frame_id: "base_link"
 slice_visualization_side_length: 10.0
 
 # The maximum rate (in Hz) at which to integrate depth images. A value of 0.0 means there is no cap.
-max_depth_update_hz: 20.0
+max_depth_update_hz: 10.0
 
 # The maximum rate (in Hz) at which to integrate color images into the color layer. A value of 0.0 means there is no cap.
 max_color_update_hz: 5.0
@@ -103,13 +103,13 @@ clear_outside_radius_rate_hz: 1.0
 #########################
 
 # The maximum distance, in meters, to integrate the TSDF or occupancy map up to for depth images.
-projective_integrator_max_integration_distance_m: 3.
+projective_integrator_max_integration_distance_m: 3.2
 
 # The maximum distance, in meters, to integrate the TSDF or occupancy map up to for LiDAR scans.
 lidar_projective_integrator_max_integration_distance_m: 10.0
 
 # The truncation distance, in units of voxels, for the TSDF or occupancy map.
-projective_integrator_truncation_distance_vox: 4.0
+projective_integrator_truncation_distance_vox: 2.0
 
 # The weighting mode, applied to TSDF and color integrations. Options: [`constant`, `constant_dropoff`, `inverse_square`, `inverse_square_dropoff`].
 weighting_mode: "inverse_square_dropoff"
@@ -130,7 +130,7 @@ unobserved_region_occupancy_probability: 0.5
 occupied_region_half_width_m: 0.1
 
 # The decay probability that is applied to the free region on decay. Must be in `[0.5, 1.0]`.
-free_region_decay_probability: 0.55
+free_region_decay_probability: 0.85
 
 # The decay probability that is applied to the occupied region on decay. Must be in `[0.0, 0.5]`.
 occupied_region_decay_probability: 0.4
@@ -142,7 +142,7 @@ mesh_integrator_min_weight: 0.0001
 mesh_integrator_weld_vertices: true
 
 # Maximum distance, in meters, to integrate the color up to.
-color_integrator_max_integration_distance_m: 7.0
+color_integrator_max_integration_distance_m: 4.0
 
 # Minimum weight of the TSDF to consider for inclusion in the ESDF.
 esdf_integrator_min_weight: 0.0001
@@ -161,5 +161,8 @@ use_tf_transforms: true
 # If enabled, by default, subscribes to `/transform` geometry_msgs::TransformStamped topic and `/pose` geometry_msgs::PoseStamped topic.
 use_topic_transforms: false
 
+human_esdf_update_rate_hz: 10
+
 human_occupancy_decay_rate_hz: 0
-keys: [chair, bagpack, human]
+
+keys: [person, backpack, chair]
