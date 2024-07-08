@@ -343,20 +343,30 @@ bool NvbloxHumanNode::processDepthImage(
   conversions_timer.Stop();
 
   timing::Timer integration_timer("ros/depth/integrate");
+
+
   for (size_t i=0; i<channels.size(); i++) {
+    timing::Timer integration_timer("ros/depth/integrate/conversion");
     if (!conversions::monoImageFromCVImage(channels[i], &mask_image_)) {
       ROS_ERROR("Failed to transform color or mask image.");
       return false;
     }
+    integration_timer.Stop();
 
     // Integrate
     if (i == 0) {
-      multi_mapper_->integrateDepth(depth_image_, mask_image_, T_L_C_depth_,
+      multi_mapper_->setMinDepthImage(depth_image_, mask_image_,
+                                    T_CM_CD, depth_camera_, mask_camera);
+      timing::Timer depth_integration_timer("ros/depth/integrate/depth");
+      multi_mapper_->integrateDepthFromMin(depth_image_, mask_image_, T_L_C_depth_,
                                 T_CM_CD, depth_camera_, mask_camera);
+      depth_integration_timer.Stop();
     } else {
-      multi_mapper_->integrateDepthMasked(depth_image_, mask_image_, 
+      timing::Timer mask_integration_timer("ros/depth/integrate/masked");
+      multi_mapper_->integrateDepthMaskedFromMin(depth_image_, mask_image_, 
                                 T_L_C_depth_,T_CM_CD, depth_camera_, 
                                 mask_camera, keys_[i-1]);
+      mask_integration_timer.Stop();                        
     }
   }
 

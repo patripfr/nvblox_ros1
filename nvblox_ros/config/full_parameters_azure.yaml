@@ -19,7 +19,7 @@ pose_frame: "camera_link"
 is_realsense_data: false
 
 # Whether to output a mesh for visualization in rviz, to be used with `nvblox_rviz_plugin`.
-compute_mesh: true
+compute_mesh: false
 
 # Whether to compute the ESDF (map of distances to the nearest obstacle).
 compute_esdf: false
@@ -30,10 +30,10 @@ esdf_2d: false
 # Whether to output a distance slice of the ESDF to be used for path planning
 # and visualization (even if the computation is 3D, will output a 2D slice
 # for viz).
-esdf_distance_slice: true
+esdf_distance_slice: false
 
 # Whether to integrate color images to color the mesh.
-use_color: true
+use_color: false
 
 # Whether to integrate depth images.
 use_depth: true
@@ -103,13 +103,13 @@ clear_outside_radius_rate_hz: 1.0
 #########################
 
 # The maximum distance, in meters, to integrate the TSDF or occupancy map up to for depth images.
-projective_integrator_max_integration_distance_m: 2.2
+projective_integrator_max_integration_distance_m: 3.5
 
 # The maximum distance, in meters, to integrate the TSDF or occupancy map up to for LiDAR scans.
 lidar_projective_integrator_max_integration_distance_m: 10.0
 
 # The truncation distance, in units of voxels, for the TSDF or occupancy map.
-projective_integrator_truncation_distance_vox: 2.0
+projective_integrator_truncation_distance_vox: 1.0
 
 # The weighting mode, applied to TSDF and color integrations. Options: [`constant`, `constant_dropoff`, `inverse_square`, `inverse_square_dropoff`].
 weighting_mode: "inverse_square_dropoff"
@@ -127,7 +127,7 @@ occupied_region_occupancy_probability: 0.8
 unobserved_region_occupancy_probability: 0.5
 
 # Half the width of the region which is considered as occupied.
-occupied_region_half_width_m: 0.1
+occupied_region_half_width_m: 0.05
 
 # The decay probability that is applied to the free region on decay. Must be in `[0.5, 1.0]`.
 free_region_decay_probability: 0.85
@@ -151,7 +151,7 @@ esdf_integrator_min_weight: 0.0001
 esdf_integrator_max_site_distance_vox: 1.0
 
 # Maximum distance to compute the ESDF up to, in meters.
-esdf_integrator_max_distance_m: 2.0
+esdf_integrator_max_distance_m: 3.0
 
 # Transformer Parameters
 # Whether to use TF transforms at all. If set to false, `use_topic_transforms` must be true and `pose_frame` *needs* to be set.
