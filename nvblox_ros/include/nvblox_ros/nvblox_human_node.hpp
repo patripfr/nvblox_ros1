@@ -41,6 +41,7 @@ struct mapperPublisherBundle {
   ros::Publisher voxels_publisher;
   ros::Publisher occupancy_publisher;
   ros::Publisher map_slice_publisher; 
+  ros::Publisher overlay_publisher; 
   std::string key;
 };
 
@@ -133,6 +134,7 @@ class NvbloxHumanNode : public NvbloxNode {
   ros::Publisher combined_map_slice_publisher_;
   ros::Publisher depth_frame_overlay_publisher_;
   ros::Publisher color_frame_overlay_publisher_;
+  ros::Publisher min_depth_publisher_;
 
   // Holds the publishers for the respective keys
   std::map<std::string, mapperPublisherBundle> masked_publishers_;

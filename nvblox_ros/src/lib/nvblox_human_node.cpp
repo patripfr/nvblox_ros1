@@ -165,6 +165,10 @@ void NvbloxHumanNode::advertiseTopics() {
     pair.second.occupancy_publisher = 
       nh_private_.advertise<sensor_msgs::PointCloud2>(
         occupancy_topic, 1, false);
+    const std::string overlay_topic = key + "_overlay";    
+    pair.second.overlay_publisher = 
+      nh_private_.advertise<sensor_msgs::Image>(
+        overlay_topic, 1, false);
     const std::string map_slice_topic = key + "_map_slice";
     pair.second.map_slice_publisher = 
       nh_private_.advertise<nvblox_msgs::DistanceMapSlice>(map_slice_topic, 1, 
@@ -178,7 +182,9 @@ void NvbloxHumanNode::advertiseTopics() {
       nh_private_.advertise<nvblox_msgs::DistanceMapSlice>("combined_map_slice",
                                                            1, false);
   depth_frame_overlay_publisher_ = nh_private_.advertise<sensor_msgs::Image>(
-      "depth_frame_overlay", 1, false);
+      "depth_frame_overlay", 1, false);  
+  min_depth_publisher_ = nh_private_.advertise<sensor_msgs::Image>(
+      "min_depth", 1, false);
   color_frame_overlay_publisher_ = nh_private_.advertise<sensor_msgs::Image>(
       "color_frame_overlay", 1, false);
 }
@@ -336,7 +342,7 @@ bool NvbloxHumanNode::processDepthImage(
     for (int v=0; v<mono_cv_image->image.cols; v++) {
       uint8_t val = mono_cv_image->image.at<uint8_t>(u,v);
       if (val < channels.size() && val > 0u) {
-        channels[int(val)].at<uint8_t>(u,v) = val;
+        channels[int(val)].at<uint8_t>(u,v) = 255;
       }
     }
   }
@@ -347,6 +353,7 @@ bool NvbloxHumanNode::processDepthImage(
 
   for (size_t i=0; i<channels.size(); i++) {
     timing::Timer integration_timer("ros/depth/integrate/conversion");
+    mask_image_.setZero();
     if (!conversions::monoImageFromCVImage(channels[i], &mask_image_)) {
       ROS_ERROR("Failed to transform color or mask image.");
       return false;
@@ -357,18 +364,28 @@ bool NvbloxHumanNode::processDepthImage(
     if (i == 0) {
       multi_mapper_->setMinDepthImage(depth_image_, mask_image_,
                                     T_CM_CD, depth_camera_, mask_camera);
+      const DepthImage& min_depth_img = multi_mapper_->getMinDepthImage();
+      sensor_msgs::Image depth_msg;
+      conversions::imageMessageFromDepthImage(min_depth_img, "cam", &depth_msg);
+      min_depth_publisher_.publish(depth_msg);
       timing::Timer depth_integration_timer("ros/depth/integrate/depth");
       multi_mapper_->integrateDepthFromMin(depth_image_, mask_image_, T_L_C_depth_,
                                 T_CM_CD, depth_camera_, mask_camera);
       depth_integration_timer.Stop();
     } else {
       timing::Timer mask_integration_timer("ros/depth/integrate/masked");
+      
       multi_mapper_->integrateDepthMaskedFromMin(depth_image_, mask_image_, 
                                 T_L_C_depth_,T_CM_CD, depth_camera_, 
                                 mask_camera, keys_[i-1]);
       mask_integration_timer.Stop();                        
+      const ColorImage& overlay_img =  multi_mapper_->getLastDepthFrameMaskOverlay();
+      sensor_msgs::Image overlay_msg;
+      conversions::imageMessageFromColorImage(overlay_img, "cam", &overlay_msg);
+      masked_publishers_[keys_[i-1]].overlay_publisher.publish(overlay_msg);
     }
   }
+
 
   integration_timer.Stop();
   return true;
