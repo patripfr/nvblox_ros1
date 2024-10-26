@@ -15,7 +15,7 @@
   <!-- <node pkg="tf2_ros" type="static_transform_publisher" name="static_tf_pub_camera_to_camera_link" args="0 0 0 1.57079 -1.57079 0 camera camera_link" />
   <node pkg="tf2_ros" type="static_transform_publisher" name="static_tf_pub_camera_to_camera_link" args="0 0 0 2.1338 0.3908 0.4626 camera camera_link" /> -->
 
-  <node pkg="nvblox_ros" type="nvblox_human_node" name="nvblox_node" respawn="false" output="screen" >
+  <node pkg="nvblox_ros" type="nvblox_human_node" name="nvblox_node" output="screen" respawn="true">
     <rosparam file="$(arg param_file)"/>
 
     <!-- Remap color and aligned depth topics -->

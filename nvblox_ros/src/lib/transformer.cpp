@@ -96,7 +96,7 @@ bool Transformer::lookupTransformTf(const std::string& from_frame,
   try {
     std::string error_string;
     if (tf_buffer_->canTransform(from_frame, to_frame, timestamp,
-                                 ros::Duration(0.1))) {
+                                 ros::Duration(0.5))) {
       T_L_C_msg = tf_buffer_->lookupTransform(from_frame, to_frame, timestamp);
     } else {
       ROS_DEBUG_STREAM("Cant transform: from:" << from_frame << " to "

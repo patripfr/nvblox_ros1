@@ -75,19 +75,19 @@ max_color_update_hz: 10.0
 max_lidar_update_hz: 10.0
 
 # The rate (in Hz) at which to update and publish the mesh.
-mesh_update_rate_hz: 5.0
+mesh_update_rate_hz: 0
 
 # The rate (in Hz) at which to update the ESDF and output the distance slice.
-esdf_update_rate_hz: 2.0
+esdf_update_rate_hz: 0
 
 # The rate (in Hz) at which to publish the static occupancy pointcloud.
-occupancy_publication_rate_hz: 5.0
+occupancy_publication_rate_hz: 3
 
 # Specifies what rate to poll the color & depth updates at. Will exit as no-op if no new images. Set this higher than you expect images to come in at.
 max_poll_rate_hz: 100.0
 
 # How many messages to store in the sensor messages queues (depth, color, lidar) before deleting oldest messages.
-maximum_sensor_message_queue_length: 30
+maximum_sensor_message_queue_length: 3
 
 # Radius around the `map_clearing_frame_id` outside which we clear the map. Note that values <= 0.0 indicate that no clearing is performed.
 map_clearing_radius_m: -1.0
@@ -103,7 +103,7 @@ clear_outside_radius_rate_hz: 1.0
 #########################
 
 # The maximum distance, in meters, to integrate the TSDF or occupancy map up to for depth images.
-projective_integrator_max_integration_distance_m: 4.5
+projective_integrator_max_integration_distance_m: 5.5
 
 # The maximum distance, in meters, to integrate the TSDF or occupancy map up to for LiDAR scans.
 lidar_projective_integrator_max_integration_distance_m: 10.0
